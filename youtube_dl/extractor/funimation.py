@@ -5,6 +5,7 @@ from .common import InfoExtractor
 from ..compat import (
     compat_HTTPError,
     compat_urllib_parse_unquote_plus,
+    compat_etree_fromstring,
 )
 from ..utils import (
     clean_html,
@@ -112,9 +113,39 @@ class FunimationIE(InfoExtractor):
     def _real_initialize(self):
         self._login()
 
+    def _extract_subtitles(self, subtitle):
+        return [{
+            'ext': 'srt',
+            'data': subtitle
+        }]
+
+    def _get_subtitles(self, video_id, webpage, display_id="Subtitles"):
+        #statis url "http://wpc.8c48.edgecastcdn.net/008C48/closedcaption/srt/" + FunimationID + ".srt"
+        # http://wpc.8c48.edgecastcdn.net/008C48/closedcaption/srt/DXDENG0001.srt
+        #http://wpc.8c48.edgecastcdn.net/008C48/closedcaption/srt/DXDENG0002.srt
+        #http://wpc.8c48.edgecastcdn.net/008C48/closedcaption/srt/AKRENGM001.srt
+        subtitles = {}
+        playlist = self._parse_json(
+            self._search_regex(
+                r'var\s+playersData\s*=\s*(\[.+?\]);\n',
+                webpage, 'players data'),
+            display_id)[0]['playlist'] #this might need to go back to display_id
+
+        items = next(item['items'] for item in playlist if item.get('items'))
+        item = next(item for item in items if item.get('itemAK') == display_id)
+        for video in item.get('videoSet', []):
+            auth_token = video.get('authToken')
+            if not auth_token:
+                continue
+            funimation_id = video.get('FUNImationID') or video.get('videoId')
+            subtitle = self._download_webpage("http://wpc.8c48.edgecastcdn.net/008C48/closedcaption/srt/" + funimation_id + ".srt", video_id, note="Downloading subtitles for " + video_id, fatal=False, errnote="")
+            if subtitle:
+                subtitles["EN"] = self._extract_subtitles(subtitle)
+
+        return subtitles
+
     def _real_extract(self, url):
         display_id = self._match_id(url)
-
         errors = []
         formats = []
 
@@ -222,6 +253,7 @@ class FunimationIE(InfoExtractor):
         thumbnail = self._og_search_thumbnail(webpage) or item.get('posterUrl')
         video_id = item.get('itemId') or display_id
 
+        subtitles = self.extract_subtitles(video_id, webpage, display_id=display_id)
         return {
             'id': video_id,
             'display_id': display_id,
@@ -229,4 +261,5 @@ class FunimationIE(InfoExtractor):
             'description': description,
             'thumbnail': thumbnail,
             'formats': formats,
+            'subtitles': subtitles
         }
